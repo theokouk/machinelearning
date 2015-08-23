@@ -1,0 +1,220 @@
+---
+title: "Practical Machine Learnning Assignment"
+output: html_document
+---
+
+## Executive summary
+This report is about predicting the way an excercise is performed by a group of 6 people. The methodology followed was to partition a large dataset to a training and test sets and apply various prediction models. Then the most accurate model was used to perform a 20 different cases prediction.
+
+## Preliminaries
+
+- The project was implemented in a 32-bit, Windows 7 environment with 4GB of RAM. This was a decisive factor as it was impossible for the computer to test high accuracy setups. Various ways were tested to find a balance between accuracy and speed. The goal was to have the maximum number of useful varables with the optimal amount of observations data sets. The optimal combination is depicted here. 
+
+- It is implied that the original data sets were downloaded in your computer in a working directory of your choice. 
+                   The links to the files are
+```{r, results='asis', echo=FALSE}
+html <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+cat(paste("[here (training)](",html,")",sep=""))
+```
+and 
+```{r, results='asis', echo=FALSE}
+html <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+cat(paste("[here (test)](",html,")",sep=""))
+``` 
+
+- For more information about the data, documentation, citation etc. click 
+```{r, results='asis', echo=FALSE}
+html <- "http://groupware.les.inf.puc-rio.br/har"
+cat(paste("[here](",html,")",sep=""))
+``` 
+
+```{r ,echo=FALSE}
+setwd("C:/Users/teo/Documents/machinelearning")
+```
+
+- The following packages are needed to run the code
+```{r 1, warning=FALSE}
+library(knitr)
+library(MASS)
+library(caret)
+library(randomForest)
+library(rpart)
+library(Matrix)
+library(lme4)
+library(arm)
+library(parallel)
+library(doParallel)
+```
+
+
+## Cleaning the data
+
+The original data need a tidying up before moving to building the models. This is a two step process:
+
+- First, the entries with the characters "NA", "#DIV/0!" and "" (blank), are accounted as non available observations. The columns containing those characters are removed.
+
+- Second, the first six columns of the data set are not relevant to the purpose of the project and are removed ("X"","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp" and "new_window").
+
+```{r 2,cache=TRUE}
+training <- read.csv("pml-training.csv", header = TRUE, na.strings=c("NA","#DIV/0!",""))
+test <- read.csv('pml-testing.csv',na.strings=c("NA","#DIV/0!",""))
+dim(training)
+```
+
+```{r 3}
+store<-colSums(is.na(training))
+training<-training[,store == 0] 
+dim(training)
+```
+
+```{r 4}
+training <- training[, -(1:6)]
+dim(training)
+```
+
+## Pre-processing
+
+This is more of a nominal step because cleaning the data part removed most of the extraneous variables. As it is shown from the "dim" argument there are no near zero covariates neither linear dependencies for the remaining variables. Unfortunately the remaining variables are too many for the prediction models to run. A cutoff process is applied. Variables with correlation higher than 75% are removed and the final data set contains 33 variables ("classe"" and 32 predictors)
+
+```{r 5, cache=TRUE}
+nearzero <- nearZeroVar(training, saveMetrics = TRUE)
+training <- training[, !nearzero$nzv]
+dim(training)
+```
+
+```{r test}
+Linear.d <-caret:: findLinearCombos(training[,-54])
+Linear.d
+```
+
+```{r 6}
+corr. <- caret::findCorrelation(cor(training[, -54]), cutoff=0.75) 
+training <- training[,-corr.]
+dim(training)
+names(training)
+```
+
+## Partitioning and cross validation
+
+- The "test" data set is a 20 observations data set which implies that is not very helpful as a test set. The "training" data set is large enough and can be partioned into a training set and a test set. A 65% - 35% splitting is performed.
+
+- The training models are customized with a 3-fold validation. The "allowParallel=TRUE" argument reduces notably processing time when the models are ran. 
+
+``` {r 7}
+inTrain <- caret:: createDataPartition(y=training$classe, p=0.65, list=FALSE)
+dataTrain <- training[inTrain,]
+dataTest <- training[-inTrain,]
+```
+
+```{r test1}
+registerDoParallel(makeCluster(detectCores()))
+tc <- trainControl(method = "cv", number = 3, verboseIter=FALSE, allowParallel=TRUE)
+set.seed(555)
+```
+
+## Models
+
+Four models are employed:
+
+- Linear Discriminant Analysis (LDA)
+- Bayes Generalized Linear Model (Bayesglm)
+- Recursive Partitioning and Regression Trees (RPART)
+- Random Forest (rForest). Note: running random Forest directly and not thru the caret package reduces processing time a lot.
+
+The out of sample Accuracy and Kappa for each model are reported. 
+
+```{r 8}
+LDA <- train(classe ~ ., data = dataTrain, method = "lda", trControl= tc)
+predict.LDA <- predict(LDA, dataTest)
+conLDA<-confusionMatrix(predict.LDA, dataTest$classe)
+conLDA$overall[1:2]
+```
+
+```{r 9}
+Bayesglm <- train(classe ~ ., data = dataTrain, method = "bayesglm", trControl= tc)
+predict.Bayes <- predict(Bayesglm, dataTest)
+conBayes<-confusionMatrix(predict.Bayes, dataTest$classe)
+conBayes$overall[1:2]
+```
+
+```{r 10, cache=TRUE}
+RPART<-train(classe ~ ., data=dataTrain, method="rpart",tuneLength = 9, trControl=tc)
+predict.RPART<- predict(RPART, dataTest)
+conRpart<-confusionMatrix(predict.RPART, dataTest$classe)
+conRpart$overall[1:2]
+```
+
+```{r 11, cache=TRUE}
+rForest <- randomForest(classe ~. , data=dataTrain, method="class")
+predict.Forest<- predict(rForest, dataTest, type = "class")
+conForest<-confusionMatrix(predict.Forest, dataTest$classe)
+conForest$overall[1:2]
+```
+
+## Summary
+The Accuracy and Kappa values for each model are:
+
+
+```{r 12}
+Accuracy <- matrix(c(0.6080,0.6043,0.3620,0.3600,0.6545,0.7289,0.9868,0.9976),ncol=2,byrow=TRUE)
+colnames(Accuracy)<- c("In sample","Out of Sample")
+rownames(Accuracy)<- c("LDA","Bayes","rPart","rForest")
+Accuracy <- as.table(Accuracy)
+kable(Accuracy, format="pandoc", caption="Accuracy",position="top", align=c("c","c"))
+```
+
+```{r 13}
+Kappa <- matrix(c(0.505,0.4986,0.187,0.1850,0.5616,0.6557,0.9833,0.9970),ncol=2,byrow=TRUE)
+colnames(Kappa)<- c("In sample","Out of Sample")
+rownames(Kappa)<- c("LDA","Bayes","rPart","rForest")
+Kappa <- as.table(Kappa)
+kable(Kappa, format="pandoc", caption="Kappa",position="top", align=c("c","c"))
+```
+
+
+
+For a more detailed picture and comparison between in sample and out of sample results you can type the following in R console (results are hidden)
+
+- in sample reports
+
+``` {r 14, results='hide'}
+LDA
+Bayesglm
+RPART
+rForest
+```
+
+- out of sample reports
+
+```{r 15, results='hide'}
+conLDA
+conBayes
+conRpart
+conForest
+```
+
+As it is clear the random Forest model  is giving the best results and it is going to be the one to do the 20 step prediction. The in sample error is 1.32% and the out of sample error is 0,24% (Note: you can calculate the in and out of sample error which is 1 - Accuracy (one minus Accuracy)). It is also interesting that the LDA and Bayesglm models perform slightly better for the in sample simulations.
+
+
+## Prediction
+
+The 20 step prediction
+
+```{r 16} 
+Prediction.Forest <- predict(rForest, test)
+Prediction.Forest
+```
+
+This function creates twenty .txt files, each for every entry of the variable "problem_id" containing the predicted value.
+
+```{r 17}
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+pml_write_files(Prediction.Forest)
+```

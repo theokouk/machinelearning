@@ -1,0 +1,14 @@
+base
+knitr
+MASS
+lattice
+ggplot2
+caret
+randomForest
+rpart
+Matrix
+lme4
+arm
+foreach
+iterators
+doParallel
